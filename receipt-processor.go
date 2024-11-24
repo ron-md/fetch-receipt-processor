@@ -3,7 +3,7 @@
 // first is the POST endpoint that process the receipts, here i will take in the receipt json and produce an ID
 // should i also calc points here???
 // second is the GET endpoint that returns the points for each receipt
-// one thing i will have to handle is generating the id, it seems like a UUID v4, hope importing is ok 
+// one thing i will have to handle is generating the Id, it seems like a UUID v4, hope importing is ok 
 package main 
 
 import (
@@ -13,35 +13,41 @@ import (
 
     "github.com/gin-gonic/gin"
 
+    "strconv"
+
+    "math"
+
+    "strings"
 )
 
 
-type receipt struct {
+type Receipt struct {
 	
-	id		string	`json:"id"`
-	retailer	string	`json:"retailer"`
-	purchaseDate	string	`json:"purchaseDate"`
-	purchaseTime	string	`json:"purchaseTime"`
-	items		[]item	`json:"items"`	
-	total		float64	`json:"total"`
-	points		int	`json:"points"`
+	Id		string	`json:"Id"` 
+	Retailer	string	`json:"Retailer" binding:"required"`
+	PurchaseDate	string	`json:"PurchaseDate" binding:"required"`
+	PurchaseTime	string	`json:"PurchaseTime" binding:"required"`
+	Items		[]Item	`json:"Items" binding:"required,dive"`	
+	Total		string	`json:"Total" binding:"required"`
+	Points		int	`json:"Points"`
 }
 
-type item struct {
+type Item struct {
 
-	shortDescription	string	`json:"shortDescription"`
-	price			float64 `json:"price"`
+	ShortDescription	string	`json:"ShortDescription" binding:"required"`
+	Price			string 	`json:"Price" binding:"required"`
 
 }
 
-var receipts = []receipt{}
+//storing in memory
+var Receipts = []Receipt{}
 
 
 func main() {
 	router := gin.Default()
 	//should just be two 
 	router.POST("/receipts/process", processReceipts)
-	router.GET("/receipts/:id/points", getPoints)
+	router.GET("/receipts/:Id/points", getPoints)
 
 	router.Run("localhost:8080")
 }
@@ -51,18 +57,22 @@ func main() {
 
 
 func processReceipts(c *gin.Context){
-	var newReceipt receipt
+	var newReceipt Receipt
 	
-	if err:= c.BindJSON(&newReceipt); err != nil {
-		return
+
+	if err:= c.ShouldBindJSON(&newReceipt); err != nil {
+		 c.JSON(http.StatusBadRequest, gin.H{
+            	"error": err.Error(),
+        	})
+        	return
 	}
 
-	newReceipt.id = uuid.New().String()
-	newReceipt.points = 0 
-	receipts = append(receipts, newReceipt)
+	newReceipt.Id = uuid.New().String()
+	newReceipt.Points = 0 
+	Receipts = append(Receipts, newReceipt)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"receipt": newReceipt.id,
+		"id": newReceipt.Id,
 	})
 
 }
@@ -70,13 +80,13 @@ func processReceipts(c *gin.Context){
 
 func getPoints(c *gin.Context){
 
-	id:= c.Param("id")
-	var pointReceipt receipt
+	Id:= c.Param("Id")
+	var pointReceipt Receipt
 
 	//first check that its even there
 	isThere := false
-	for _, a:= range receipts{
-		if a.id == id {
+	for _, a:= range Receipts{
+		if a.Id == Id {
 			isThere = true
 			pointReceipt = a
 		}
@@ -92,16 +102,85 @@ func getPoints(c *gin.Context){
 	totalPoints := 0
 
 	//characters
-	for _, x := range pointReceipt.retailer{
-		if int(x) >= 48 || int(x) <= 57 || int(x) >= 65 || int(x) <= 90 || int(x) >= 97 || int(x) <=122{
+	for _, x := range pointReceipt.Retailer{
+		if int(x) >= 48 && int(x) <= 57 || int(x) >= 65 && int(x) <= 90 || int(x) >= 97 && int(x) <=122{
 			totalPoints += 1
 		}
 	}
 	
 
+	//round total 
+	for i, x := range pointReceipt.Total{
+		if int(x) == 46{ //period
+			if pointReceipt.Total[i+1] == 48 && pointReceipt.Total[i+2] == 48 {
+				totalPoints += 50
+				break
+				}
+			}
+		}
+
+	// multiple of 0.25
+	if multOfQuart, err := strconv.ParseFloat(pointReceipt.Total, 64); err == nil {
+		
+		if math.Mod(multOfQuart, 0.25) == 0 {
+			totalPoints += 25
+		}
+
+
+	}
+
+	//5 for every 2 items
+	itemLength := len(pointReceipt.Items)
+	if (itemLength % 2) == 1 {
+		itemLength -= 1
+
+	}
+
+	totalPoints += (itemLength / 2) * 5
+		
+	
+
+	//trimmed descriptions
+	for _, x := range pointReceipt.Items{
+		trimmedDesc := strings.TrimSpace(x.ShortDescription)
+		itemPrice, _  := strconv.ParseFloat(x.Price, 64)
+		if len(trimmedDesc) % 3 == 0 {
+			itemPrice = itemPrice * 0.2 
+			totalPoints += int(math.Ceil(itemPrice))
+		}
+	}
+		
+
+	//if purchase date is odd
+	getDate := pointReceipt.PurchaseDate[len(pointReceipt.PurchaseDate)-2:len(pointReceipt.PurchaseDate)]
+	
+	getDateInt, _ := strconv.Atoi(getDate)
+
+	if getDateInt % 2 == 1 {
+		
+		totalPoints += 6 		
+	}
+
+	//purchase time between 2pm and 4pm
+	getHour := pointReceipt.PurchaseTime[:2]
+
+	getHourInt, _ := strconv.Atoi(getHour)
+
+	//AFTER 2:00pm, i'll be thorough at expense of being annoying lol
+	getMinute := pointReceipt.PurchaseTime[len(pointReceipt.PurchaseTime)-1:len(pointReceipt.PurchaseTime)]
+	
+	getMinuteInt, _ := strconv.Atoi(getMinute)
+
+	if (getHourInt >=14 && getMinuteInt > 0) && getHourInt < 16{
+
+		totalPoints += 10
+		}
+
+
 	c.JSON(http.StatusOK, gin.H{
-		"points":totalPoints,
-		"test":pointReceipt.retailer,
+		"points": totalPoints,
 	})
+
+	
 }
 
