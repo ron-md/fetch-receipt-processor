@@ -1,4 +1,4 @@
-# H1 fetch receipt processor challenge
+# fetch receipt processor challenge
 
 this was a takehome for a backend position at fetch, all in go
 
